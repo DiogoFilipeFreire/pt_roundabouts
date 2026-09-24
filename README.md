@@ -18,21 +18,23 @@ To delve into this analysis:
 
 ### Reproducible pipeline
 
-`roundabout.py` runs the whole analysis without a Google Maps API key:
+The notebook and `roundabout.py` share the same functions and need no Google Maps API key:
 
-1. Download the official municipality/parish boundaries (CAOP) from [Direção-Geral do Território](https://www.dgterritorio.gov.pt/cartografia/cartografia-tematica/caop).
-2. Run:
+1. Download the official municipality/parish boundaries (CAOP) from [Direção-Geral do Território](https://www.dgterritorio.gov.pt/cartografia/cartografia-tematica/caop). The mainland, Madeira and the Azores come as separate layers.
+2. Either open the notebook and set `BOUNDARY_SOURCES` and `NAME_COLUMN` in its *Settings* cell, or run the script, repeating `--boundaries` for each layer:
 
    ```bash
-   python roundabout.py --boundaries CAOP.gpkg --layer <municipality layer> --name-column <municipality name column>
+   python roundabout.py --boundaries CAOP.gpkg@<mainland layer> --boundaries CAOP.gpkg@<Madeira layer> --boundaries CAOP.gpkg@<Azores layer> --name-column <municipality name column>
    ```
 
-The script:
+The pipeline:
 
 - fetches every OpenStreetMap way tagged `junction=roundabout` or `junction=circular` in Portugal (mainland, Azores and Madeira);
 - merges the ways that share a node, so a roundabout split into several segments is counted once;
 - finds the municipality that contains each roundabout by checking which boundary polygon it falls inside;
 - writes `Portugal_roundabouts.csv` and `pt_cities_rb.csv`. Municipalities with no roundabouts get a count of 0, and the per-inhabitant rate is given per 10,000 inhabitants.
+
+The notebook saves the Overpass answer in `osm_roundabout_ways.json`, so re-running it doesn't query the server again. Delete that file to download fresh data.
 
 Run the tests with `python -m pytest tests`.
 

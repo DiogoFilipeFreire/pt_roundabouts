@@ -7,7 +7,7 @@ Pipeline:
     4. municipality_stats()      -> counts, per km2 and per 10k inhabitants
 
 Usage:
-    python roundabout.py --boundaries CAOP.gpkg --layer <municipality layer> --name-column municipio
+    python roundabout.py --boundaries CAOP.gpkg@<mainland layer> --boundaries CAOP.gpkg@<Madeira layer> ...
 """
 import argparse
 import time
@@ -120,6 +120,18 @@ def region_of(latitude, longitude):
     return "Continente"
 
 
+def load_boundaries(sources):
+    """Read and stack boundary layers given as (path, layer) pairs, in EPSG:4326.
+
+    CAOP ships the mainland, Madeira and the Azores as separate layers, so
+    several sources are usually needed to cover the whole country.
+    """
+    import geopandas as gpd
+
+    frames = [gpd.read_file(path, layer=layer).to_crs("EPSG:4326") for path, layer in sources]
+    return gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs="EPSG:4326")
+
+
 def assign_municipalities(roundabouts, boundaries, name_column):
     """Attach the municipality containing each roundabout (point-in-polygon).
 
@@ -195,22 +207,26 @@ def municipality_stats(roundabouts, municipalities):
     return stats
 
 
+def parse_source(source):
+    """'CAOP.gpkg@cont_municipios' -> ('CAOP.gpkg', 'cont_municipios'); no '@' -> default layer."""
+    path, separator, layer = source.rpartition("@")
+    return (path, layer) if separator else (source, None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--boundaries", required=True,
-                        help="municipality or parish polygons, e.g. CAOP from dgterritorio.gov.pt")
-    parser.add_argument("--layer", help="layer name inside the boundaries file (GeoPackage)")
+    parser.add_argument("--boundaries", required=True, action="append", metavar="PATH[@LAYER]",
+                        help="municipality or parish polygons, e.g. CAOP from dgterritorio.gov.pt; "
+                             "repeat for each region/layer")
     parser.add_argument("--name-column", default="municipio")
     parser.add_argument("--municipalities", default="lista_municípios_pt.csv")
     parser.add_argument("--out-dir", default=".")
     args = parser.parse_args()
 
-    import geopandas as gpd
-
     roundabouts = merge_roundabout_ways(fetch_roundabout_ways())
     print(f"{len(roundabouts)} roundabouts in Portugal")
 
-    boundaries = gpd.read_file(args.boundaries, layer=args.layer)
+    boundaries = load_boundaries([parse_source(source) for source in args.boundaries])
     municipalities = load_municipalities(args.municipalities)
     roundabouts = assign_municipalities(roundabouts, boundaries, args.name_column)
     roundabouts = match_city_codes(roundabouts, municipalities)
