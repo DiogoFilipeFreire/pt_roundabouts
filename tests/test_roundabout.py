@@ -6,8 +6,8 @@ from roundabout import (assign_municipalities, load_municipalities, match_city_c
                         merge_roundabout_ways, municipality_stats, normalize_name)
 
 
-def way(way_id, nodes, coords):
-    return {"type": "way", "id": way_id, "nodes": nodes,
+def way(way_id, nodes, coords, highway="primary"):
+    return {"type": "way", "id": way_id, "nodes": nodes, "tags": {"highway": highway},
             "geometry": [{"lat": lat, "lon": lon} for lat, lon in coords]}
 
 
@@ -33,6 +33,12 @@ def test_merge_is_transitive():
     assert len(merge_roundabout_ways(elements)) == 1
 
 
+def test_roundabouts_not_open_to_traffic_are_skipped():
+    elements = [way(1, [1, 2], [(0, 0), (0, 1)]), way(2, [3, 4], [(1, 1), (1, 0)], highway="proposed"),
+                way(3, [5, 6], [(2, 2), (2, 3)], highway="cycleway"), way(4, [7, 8], [(3, 3), (3, 4)], highway=None)]
+    assert merge_roundabout_ways(elements)["osm_way_ids"].tolist() == [[1]]
+
+
 def test_normalize_name():
     assert normalize_name("ÉVORA") == normalize_name("Évora") == "evora"
     assert normalize_name("Vila  Nova de Gaia ") == "vila nova de gaia"
@@ -46,18 +52,20 @@ def test_load_municipalities_parses_numbers():
     assert abrantes["area"] == 714.69
     assert municipalities["population_2021"].notna().all()
     assert municipalities["area"].notna().all()
+    assert municipalities["city"].str.match(r"\w").all()
 
 
 def test_homonymous_municipalities_are_disambiguated():
     municipalities = load_municipalities()
     roundabouts = pd.DataFrame({
-        "municipality": ["Lagoa", "LAGOA", "Calheta", "Calheta", "Lisboa", "Nowhere"],
-        "latitude": [37.13, 37.75, 32.72, 38.6, 38.72, 38.0],
-        "longitude": [-8.45, -25.57, -17.18, -28.0, -9.14, -8.0],
+        "municipality": ["Lagoa", "LAGOA", "Calheta", "Calheta de São Jorge", "Lisboa",
+                         "Paços de Ferreira", "Nowhere"],
+        "latitude": [37.13, 37.75, 32.72, 38.6, 38.72, 41.27, 38.0],
+        "longitude": [-8.45, -25.57, -17.18, -28.0, -9.14, -8.38, -8.0],
     })
     codes = match_city_codes(roundabouts, municipalities)["city_code"]
-    assert codes.iloc[:5].tolist() == ["LGA", "LAG", "CLT", "CHT", "LSB"]
-    assert pd.isna(codes.iloc[5])
+    assert codes.iloc[:6].tolist() == ["LGA", "LAG", "CLT", "CHT", "LSB", "PFR"]
+    assert pd.isna(codes.iloc[6])
 
 
 def test_stats_fill_missing_with_zero():
@@ -83,3 +91,15 @@ def test_assign_municipalities_point_in_polygon():
     result = assign_municipalities(roundabouts, boundaries, "municipio")
     assert result["municipality"].tolist()[:3] == ["Lisboa", "Lisboa", "Amadora"]
     assert pd.isna(result["municipality"].iloc[3])
+
+
+def test_homonymous_polygons_are_not_dissolved_together():
+    boundaries = gpd.GeoDataFrame(
+        {"dtmn": ["0808", "4201"], "municipio": ["Lagoa", "Lagoa"]},
+        geometry=[box(-8.55, 37.05, -8.35, 37.2), box(-25.65, 37.7, -25.5, 37.8)],
+        crs="EPSG:4326",
+    )
+    roundabouts = pd.DataFrame({"latitude": [37.13, 37.75], "longitude": [-8.45, -25.57]})
+    result = assign_municipalities(roundabouts, boundaries, "municipio", id_column="dtmn")
+    assert result["municipality"].tolist() == ["Lagoa", "Lagoa"]
+    assert match_city_codes(result, load_municipalities())["city_code"].tolist() == ["LGA", "LAG"]

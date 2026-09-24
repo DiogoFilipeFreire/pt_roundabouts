@@ -20,11 +20,15 @@ To delve into this analysis:
 
 The notebook and `roundabout.py` share the same functions and need no Google Maps API key:
 
-1. Download the official municipality/parish boundaries (CAOP) from [Direção-Geral do Território](https://www.dgterritorio.gov.pt/cartografia/cartografia-tematica/caop). The mainland, Madeira and the Azores come as separate layers.
-2. Either open the notebook and set `BOUNDARY_SOURCES` and `NAME_COLUMN` in its *Settings* cell, or run the script, repeating `--boundaries` for each layer:
+1. Download the official boundaries (CAOP) from [Direção-Geral do Território](https://www.dgterritorio.gov.pt/cartografia/cartografia-tematica/caop): the GeoPackage files for the mainland (Continente), Madeira (RAM) and the Azores (RAA), and unzip them into a `caop/` folder next to the notebook.
+2. Open the notebook: its *Settings* cell already points to the CAOP 2024.1 files and their municipality layers (`municipio` holds the name). Adjust the paths if you download another edition. Or run the script, repeating `--boundaries` for each layer:
 
    ```bash
-   python roundabout.py --boundaries CAOP.gpkg@<mainland layer> --boundaries CAOP.gpkg@<Madeira layer> --boundaries CAOP.gpkg@<Azores layer> --name-column <municipality name column>
+   python roundabout.py \
+     --boundaries caop/Continente_CAOP2024_1.gpkg@cont_municipios \
+     --boundaries caop/ArqMadeira_CAOP2024_1.gpkg@ram_municipios \
+     --boundaries caop/ArqAcores_GOcidental_CAOP2024_1.gpkg@raa_oci_municipios \
+     --boundaries caop/ArqAcores_GCentral_GOriental_CAOP2024_1.gpkg@raa_cen_ori_municipios
    ```
 
 The pipeline:

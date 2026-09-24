@@ -18,6 +18,17 @@ import pandas as pd
 import requests
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# overpass-api.de answers 406 to generic clients such as the default python-requests agent
+USER_AGENT = "pt_roundabouts/1.0 (https://github.com/DiogoFilipeFreire/pt_roundabouts)"
+
+# Roundabouts that are not (yet) open to traffic, or not for cars
+EXCLUDED_HIGHWAYS = ("proposed", "construction", "abandoned", "disused", "razed",
+                     "cycleway", "footway", "path", "pedestrian")
+
+# CAOP names that differ from the municipality list (normalized form)
+NAME_ALIASES = {
+    "calheta de sao jorge": "calheta",
+}
 
 # Boxes used to tell apart homonymous municipalities (Lagoa, Calheta).
 REGION_BOXES = {
@@ -32,10 +43,11 @@ def build_overpass_query(junctions=("roundabout", "circular"), timeout=600):
     Matching the country by ISO code avoids picking up any other area named "Portugal".
     """
     junction_regex = "|".join(junctions)
+    excluded_regex = "|".join(EXCLUDED_HIGHWAYS)
     return f"""
     [out:json][timeout:{timeout}];
     area["ISO3166-1"="PT"][admin_level=2]->.pt;
-    way["junction"~"^({junction_regex})$"](area.pt);
+    way["junction"~"^({junction_regex})$"]["highway"]["highway"!~"^({excluded_regex})$"](area.pt);
     out geom;
     """
 
@@ -45,7 +57,8 @@ def fetch_roundabout_ways(query=None, retries=4, timeout=900):
     query = query or build_overpass_query()
     for attempt in range(retries + 1):
         try:
-            response = requests.post(OVERPASS_URL, data={"data": query}, timeout=timeout)
+            response = requests.post(OVERPASS_URL, data={"data": query}, timeout=timeout,
+                                     headers={"User-Agent": USER_AGENT})
             if response.status_code in (429, 502, 503, 504):
                 raise requests.HTTPError(f"Overpass busy ({response.status_code})")
             response.raise_for_status()
@@ -54,6 +67,11 @@ def fetch_roundabout_ways(query=None, retries=4, timeout=900):
             if attempt == retries:
                 raise
             time.sleep(2 ** (attempt + 1))
+
+
+def is_open_road(element):
+    highway = element.get("tags", {}).get("highway")
+    return highway is not None and highway not in EXCLUDED_HIGHWAYS
 
 
 def merge_roundabout_ways(elements):
@@ -65,7 +83,7 @@ def merge_roundabout_ways(elements):
     distance threshold would also merge two separate roundabouts that are
     close together, and could split a very large one.
     """
-    ways = [e for e in elements if e.get("type") == "way" and e.get("nodes")]
+    ways = [e for e in elements if e.get("type") == "way" and e.get("nodes") and is_open_road(e)]
     parent = list(range(len(ways)))
 
     def find(i):
@@ -132,12 +150,15 @@ def load_boundaries(sources):
     return gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs="EPSG:4326")
 
 
-def assign_municipalities(roundabouts, boundaries, name_column):
+def assign_municipalities(roundabouts, boundaries, name_column, id_column=None):
     """Attach the municipality containing each roundabout (point-in-polygon).
 
     Unlike reverse geocoding, this needs no API key, has no rate limit, gives
     the same answer on every run, and returns the municipality rather than
     the town, so the result joins directly with the municipality table.
+
+    Pass id_column (CAOP: 'dtmn') so that homonymous municipalities, such as
+    the two Lagoa, are not dissolved into a single polygon.
     """
     import geopandas as gpd
 
@@ -146,9 +167,10 @@ def assign_municipalities(roundabouts, boundaries, name_column):
         geometry=gpd.points_from_xy(roundabouts["longitude"], roundabouts["latitude"]),
         crs="EPSG:4326",
     )
-    polygons = boundaries[[name_column, "geometry"]].to_crs("EPSG:4326")
+    keys = [id_column, name_column] if id_column else [name_column]
+    polygons = boundaries[keys + ["geometry"]].to_crs("EPSG:4326")
     # CAOP is split into parishes; dissolve so each municipality is one polygon
-    polygons = polygons.dissolve(by=name_column).reset_index()
+    polygons = polygons.dissolve(by=keys).reset_index()
     joined = gpd.sjoin(points, polygons, how="left", predicate="within")
     joined = joined[~joined.index.duplicated(keep="first")]
     result = roundabouts.copy()
@@ -183,7 +205,8 @@ def match_city_codes(roundabouts, municipalities, name_column="municipality"):
         lookup.setdefault(normalize_name(base), []).append((code, qualifier.strip(" )")))
 
     def code_for(row):
-        candidates = lookup.get(normalize_name(row[name_column]), [])
+        name = normalize_name(row[name_column])
+        candidates = lookup.get(NAME_ALIASES.get(name, name), [])
         if len(candidates) == 1:
             return candidates[0][0]
         region = region_of(row["latitude"], row["longitude"])
@@ -219,6 +242,7 @@ def main():
                         help="municipality or parish polygons, e.g. CAOP from dgterritorio.gov.pt; "
                              "repeat for each region/layer")
     parser.add_argument("--name-column", default="municipio")
+    parser.add_argument("--id-column", default="dtmn", help="unique municipality code; '' to disable")
     parser.add_argument("--municipalities", default="lista_municípios_pt.csv")
     parser.add_argument("--out-dir", default=".")
     args = parser.parse_args()
@@ -228,7 +252,7 @@ def main():
 
     boundaries = load_boundaries([parse_source(source) for source in args.boundaries])
     municipalities = load_municipalities(args.municipalities)
-    roundabouts = assign_municipalities(roundabouts, boundaries, args.name_column)
+    roundabouts = assign_municipalities(roundabouts, boundaries, args.name_column, args.id_column or None)
     roundabouts = match_city_codes(roundabouts, municipalities)
 
     unmatched = roundabouts["city_code"].isna()
