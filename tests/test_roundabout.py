@@ -46,18 +46,20 @@ def test_load_municipalities_parses_numbers():
     assert abrantes["area"] == 714.69
     assert municipalities["population_2021"].notna().all()
     assert municipalities["area"].notna().all()
+    assert municipalities["city"].str.match(r"\w").all()
 
 
 def test_homonymous_municipalities_are_disambiguated():
     municipalities = load_municipalities()
     roundabouts = pd.DataFrame({
-        "municipality": ["Lagoa", "LAGOA", "Calheta", "Calheta", "Lisboa", "Nowhere"],
-        "latitude": [37.13, 37.75, 32.72, 38.6, 38.72, 38.0],
-        "longitude": [-8.45, -25.57, -17.18, -28.0, -9.14, -8.0],
+        "municipality": ["Lagoa", "LAGOA", "Calheta", "Calheta de São Jorge", "Lisboa",
+                         "Paços de Ferreira", "Nowhere"],
+        "latitude": [37.13, 37.75, 32.72, 38.6, 38.72, 41.27, 38.0],
+        "longitude": [-8.45, -25.57, -17.18, -28.0, -9.14, -8.38, -8.0],
     })
     codes = match_city_codes(roundabouts, municipalities)["city_code"]
-    assert codes.iloc[:5].tolist() == ["LGA", "LAG", "CLT", "CHT", "LSB"]
-    assert pd.isna(codes.iloc[5])
+    assert codes.iloc[:6].tolist() == ["LGA", "LAG", "CLT", "CHT", "LSB", "PFR"]
+    assert pd.isna(codes.iloc[6])
 
 
 def test_stats_fill_missing_with_zero():
@@ -83,3 +85,15 @@ def test_assign_municipalities_point_in_polygon():
     result = assign_municipalities(roundabouts, boundaries, "municipio")
     assert result["municipality"].tolist()[:3] == ["Lisboa", "Lisboa", "Amadora"]
     assert pd.isna(result["municipality"].iloc[3])
+
+
+def test_homonymous_polygons_are_not_dissolved_together():
+    boundaries = gpd.GeoDataFrame(
+        {"dtmn": ["0808", "4201"], "municipio": ["Lagoa", "Lagoa"]},
+        geometry=[box(-8.55, 37.05, -8.35, 37.2), box(-25.65, 37.7, -25.5, 37.8)],
+        crs="EPSG:4326",
+    )
+    roundabouts = pd.DataFrame({"latitude": [37.13, 37.75], "longitude": [-8.45, -25.57]})
+    result = assign_municipalities(roundabouts, boundaries, "municipio", id_column="dtmn")
+    assert result["municipality"].tolist() == ["Lagoa", "Lagoa"]
+    assert match_city_codes(result, load_municipalities())["city_code"].tolist() == ["LGA", "LAG"]
