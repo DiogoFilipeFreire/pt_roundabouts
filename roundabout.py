@@ -21,6 +21,10 @@ OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 # overpass-api.de answers 406 to generic clients such as the default python-requests agent
 USER_AGENT = "pt_roundabouts/1.0 (https://github.com/DiogoFilipeFreire/pt_roundabouts)"
 
+# Roundabouts that are not (yet) open to traffic, or not for cars
+EXCLUDED_HIGHWAYS = ("proposed", "construction", "abandoned", "disused", "razed",
+                     "cycleway", "footway", "path", "pedestrian")
+
 # CAOP names that differ from the municipality list (normalized form)
 NAME_ALIASES = {
     "calheta de sao jorge": "calheta",
@@ -39,10 +43,11 @@ def build_overpass_query(junctions=("roundabout", "circular"), timeout=600):
     Matching the country by ISO code avoids picking up any other area named "Portugal".
     """
     junction_regex = "|".join(junctions)
+    excluded_regex = "|".join(EXCLUDED_HIGHWAYS)
     return f"""
     [out:json][timeout:{timeout}];
     area["ISO3166-1"="PT"][admin_level=2]->.pt;
-    way["junction"~"^({junction_regex})$"](area.pt);
+    way["junction"~"^({junction_regex})$"]["highway"]["highway"!~"^({excluded_regex})$"](area.pt);
     out geom;
     """
 
@@ -64,6 +69,11 @@ def fetch_roundabout_ways(query=None, retries=4, timeout=900):
             time.sleep(2 ** (attempt + 1))
 
 
+def is_open_road(element):
+    highway = element.get("tags", {}).get("highway")
+    return highway is not None and highway not in EXCLUDED_HIGHWAYS
+
+
 def merge_roundabout_ways(elements):
     """Collapse the OSM ways of the same roundabout into a single point.
 
@@ -73,7 +83,7 @@ def merge_roundabout_ways(elements):
     distance threshold would also merge two separate roundabouts that are
     close together, and could split a very large one.
     """
-    ways = [e for e in elements if e.get("type") == "way" and e.get("nodes")]
+    ways = [e for e in elements if e.get("type") == "way" and e.get("nodes") and is_open_road(e)]
     parent = list(range(len(ways)))
 
     def find(i):

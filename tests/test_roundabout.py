@@ -6,8 +6,8 @@ from roundabout import (assign_municipalities, load_municipalities, match_city_c
                         merge_roundabout_ways, municipality_stats, normalize_name)
 
 
-def way(way_id, nodes, coords):
-    return {"type": "way", "id": way_id, "nodes": nodes,
+def way(way_id, nodes, coords, highway="primary"):
+    return {"type": "way", "id": way_id, "nodes": nodes, "tags": {"highway": highway},
             "geometry": [{"lat": lat, "lon": lon} for lat, lon in coords]}
 
 
@@ -31,6 +31,12 @@ def test_merge_is_transitive():
     elements = [way(1, [1, 2], [(0, 0), (0, 1)]), way(2, [3, 4], [(1, 1), (1, 0)]),
                 way(3, [2, 3], [(0, 1), (1, 1)])]
     assert len(merge_roundabout_ways(elements)) == 1
+
+
+def test_roundabouts_not_open_to_traffic_are_skipped():
+    elements = [way(1, [1, 2], [(0, 0), (0, 1)]), way(2, [3, 4], [(1, 1), (1, 0)], highway="proposed"),
+                way(3, [5, 6], [(2, 2), (2, 3)], highway="cycleway"), way(4, [7, 8], [(3, 3), (3, 4)], highway=None)]
+    assert merge_roundabout_ways(elements)["osm_way_ids"].tolist() == [[1]]
 
 
 def test_normalize_name():
